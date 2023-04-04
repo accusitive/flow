@@ -30,3 +30,4 @@ lib/hexdump.ex
 # Added by cargo
 
 /target
+/priv
