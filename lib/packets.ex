@@ -229,7 +229,7 @@ defmodule Flow.Packets.Play do
         {List.insert_at(lizt, x, s), data}
       end)
 
-    data = Flow.Hematite.add(data)
+    data = Flow.Hematite.read_and_discard_nbt(data)
     {dimension_type, data} = Flow.Helpers.VarintHelper.read_mc_string(data)
     {dimension_name, data} = Flow.Helpers.VarintHelper.read_mc_string(data)
     <<hashed_seed::64, data::binary>> = data
