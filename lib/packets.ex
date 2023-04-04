@@ -176,3 +176,96 @@ defmodule Flow.Packets.Login do
     message_id <> success <> data
   end
 end
+
+defmodule Flow.Packets.Play do
+  def s_read_chat_message(data) do
+    {message, data} = Flow.Helpers.VarintHelper.read_mc_string(data)
+    # TODO read the rest of the packet
+    {message, data}
+  end
+
+  def c_write_respawn(
+        dimension_type,
+        dimension_name,
+        hashed_seed,
+        gamemode,
+        previous_gamemode,
+        is_debug,
+        is_flat,
+        copy_metadata
+      ) do
+    dimension_type = Flow.Helpers.VarintHelper.write_mc_string(dimension_type)
+    dimension_name = Flow.Helpers.VarintHelper.write_mc_string(dimension_name)
+    hashed_seed = <<hashed_seed::64>>
+    gamemode = <<gamemode::8>>
+    previous_gamemode = <<previous_gamemode::8>>
+    is_debug = <<is_debug::8>>
+    is_flat = <<is_flat::8>>
+    copy_metadata = <<copy_metadata::8>>
+    has_death_location = <<0::8>>
+
+    dimension_type <>
+      dimension_name <>
+      hashed_seed <>
+      gamemode <>
+      previous_gamemode <>
+      is_debug <>
+      is_flat <>
+      copy_metadata <> has_death_location
+  end
+
+  def s_read_join_game(data) do
+    <<entity_id::32, data::binary>> = data
+    <<is_hardcore::8, data::binary>> = data
+    <<gamemode::8, data::binary>> = data
+    <<previous_gamemode::8, data::binary>> = data
+    {dimension_count, data} = Varint.LEB128.decode(data)
+    l = for n <- 0..(dimension_count - 1), do: n
+
+    {dimensions, data} =
+      List.foldl(l, {[], data}, fn x, {lizt, data} ->
+        {s, data} = Flow.Helpers.VarintHelper.read_mc_string(data)
+        IO.puts("called read string")
+        {List.insert_at(lizt, x, s), data}
+      end)
+
+    data = Flow.Hematite.add(data)
+    {dimension_type, data} = Flow.Helpers.VarintHelper.read_mc_string(data)
+    {dimension_name, data} = Flow.Helpers.VarintHelper.read_mc_string(data)
+    <<hashed_seed::64, data::binary>> = data
+    {max_players, data} = Varint.LEB128.decode(data)
+    {simulation_distance, data} = Varint.LEB128.decode(data)
+    {view_distance, data} = Varint.LEB128.decode(data)
+
+    <<red_debug::8, respawn_screen::8, debug::8, flat::8, has_death_location::8, data::binary>> =
+      data
+
+    x =
+      case has_death_location do
+        1 ->
+          {death_dimension_name, data} = Flow.Helpers.VarintHelper.read_mc_string(data)
+
+          <<death_x::26, death_z::26, death_y::12, _data::binary>> = data
+
+          {entity_id, is_hardcore, gamemode, previous_gamemode, dimension_count, dimensions,
+           dimension_type, dimension_name, hashed_seed, max_players, view_distance,
+           simulation_distance, red_debug, respawn_screen, debug, flat, has_death_location,
+           death_dimension_name, {death_x, death_y, death_z}}
+
+        _ ->
+          {entity_id, is_hardcore, gamemode, previous_gamemode, dimension_count, dimensions,
+           dimension_type, dimension_name, hashed_seed, max_players, view_distance,
+           simulation_distance, red_debug, respawn_screen, debug, flat, has_death_location}
+      end
+
+    IO.puts("#{dimension_type} #{has_death_location}")
+    x
+
+    #  n = NBT.decode(List.last(dimensions))
+    # n = NBT.decode(data)
+    # p = :nbt_erlang.parse_nbt_compound(data, '', 0)
+
+    #  IO.puts("#{inspect p}")
+    # IO.puts("#{dimension_count} z is equal to #{inspect(z)}")
+  end
+end

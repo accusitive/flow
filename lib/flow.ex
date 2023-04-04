@@ -16,6 +16,7 @@ defmodule Flow.Application do
     ]
 
     :ets.new(:keys, [:set, :protected, :named_table])
+    :ets.new(:upstream, [:set, :public, :named_table])
     private_key = X509.PrivateKey.new_rsa(2048)
     public_key = X509.PublicKey.derive(private_key)
     :ets.insert(:keys, {:priv, private_key})
@@ -80,6 +81,16 @@ end
 
 defmodule Flow.Handshake do
   def loop(socket, state, kv, crypto_state, upstream \\ nil) do
+    upstream =
+      case upstream do
+        nil ->
+          nil
+
+        _ ->
+          [{:upstream, upstream}] = :ets.lookup(:upstream, :upstream)
+          upstream
+      end
+
     {_len, id, data} =
       case crypto_state do
         {:none} ->
@@ -95,7 +106,7 @@ defmodule Flow.Handshake do
     case {state, id} do
       {0, 0x00} ->
         {pv, _add, _port, next_state} = Flow.Packets.Handshaking.s_read_handshake(data)
-        Flow.Handshake.loop(socket, next_state, Map.merge(kv, %{pv: pv}), crypto_state)
+        Flow.Handshake.loop(socket, next_state, Map.put(kv, :pv, pv), crypto_state)
 
       # Status request
       {1, 0x00} ->
@@ -156,7 +167,7 @@ defmodule Flow.Handshake do
         j = Jason.decode!(body)
 
         properties = j["properties"]
-
+        kv = Map.put(kv, :properties, properties)
         :crypto.start()
         encryptor = :crypto.crypto_init(:aes_cfb8, shared, shared, true)
         decryptor = :crypto.crypto_init(:aes_cfb8, shared, shared, false)
@@ -172,59 +183,8 @@ defmodule Flow.Handshake do
           login_success
         )
 
-        {:ok, upstream} =
-          :gen_tcp.connect('localhost', 25565, [:binary, active: false, packet: 0, nodelay: true])
-
-        # :gen_tcp.send()
-        Flow.Helpers.VarintHelper.write_length_id_prefixed_packet(
-          upstream,
-          0x0,
-          Flow.Packets.Handshaking.c_write_handshake(kv[:pv], "localhost", 25565, 2)
-        )
-
-        Flow.Helpers.VarintHelper.write_length_id_prefixed_packet(
-          upstream,
-          0x0,
-          Flow.Packets.Login.c_write_login_start(kv[:name], kv[:uuid])
-        )
-
-        # Velocity Modern Forwarding setup
-        # Logic from https://github.com/valence-rs/valence/blob/d85b7f5e896fece509137c7769a043abf3ceb76b/src/server/login.rs#L199
-
-        {_len, _id, data} = Flow.Helpers.VarintHelper.read_length_prefixed_packet(upstream)
-        IO.puts("#{inspect(data)}")
-
-        {message_id, _brand, max_supported_forwarding_version} =
-          Flow.Packets.Login.s_read_plugin_request(data)
-
-        case max_supported_forwarding_version do
-          <<0x4>> ->
-            IO.puts("forwarding 4")
-
-            version = Varint.LEB128.encode(4)
-            ip = Flow.Helpers.VarintHelper.write_mc_string("100.100.100.100")
-
-            uuid = <<kv[:uuid]::128>>
-            username = Flow.Helpers.VarintHelper.write_mc_string(kv[:name])
-
-            properties_len = Varint.LEB128.encode(length(properties))
-            props = Flow.Packets.Login.write_properties(properties)
-
-            idk = version <> ip <> uuid <> username <> properties_len <> props
-            signature = :crypto.mac(:hmac, :sha256, "secret", idk)
-
-            Flow.Helpers.VarintHelper.write_length_id_prefixed_packet(
-              upstream,
-              0x02,
-              Flow.Packets.Login.c_write_plugin_response(message_id, 1, signature <> idk)
-            )
-
-          _ ->
-            IO.puts("Unknown Forwarding version, ignoring")
-        end
-
-        # :crypto.mac(:hmac, :sha256, "secret", "test")
-
+        upstream = Flow.Helpers.ConnectionHelper.establish_connection(kv, "localhost", 25565)
+        :ets.insert(:upstream, {:upstream, upstream})
         # if id isnt 0x02, the login wasn't successful
         # TODO: handle this ^ and disconnect player
         {_len, id1, _data} = Flow.Helpers.VarintHelper.read_length_prefixed_packet(upstream)
@@ -258,6 +218,43 @@ defmodule Flow.Handshake do
           upstream
         )
 
+      {3, 0x05} ->
+        {message, _data} = Flow.Packets.Play.s_read_chat_message(data)
+        IO.puts("#{message}")
+
+        case message do
+          "2" ->
+            Flow.Helpers.ConnectionHelper.fully_proxy(
+              socket,
+              upstream,
+              crypto_state,
+              kv,
+              "localhost",
+              25566
+            )
+
+          "1" ->
+            Flow.Helpers.ConnectionHelper.fully_proxy(
+              socket,
+              upstream,
+              crypto_state,
+              kv,
+              "localhost",
+              25565
+            )
+
+          _ ->
+            Flow.Helpers.VarintHelper.write_length_id_prefixed_packet(upstream, id, data)
+        end
+
+        Flow.Handshake.loop(
+          socket,
+          state,
+          kv,
+          crypto_state,
+          upstream
+        )
+
       # Player Session
       # Cancel this packet, otherwise the server will kick the player
       {3, 0x06} ->
@@ -284,10 +281,16 @@ defmodule Flow.Handshake do
     end
   end
 
-  def read_from_upstream({encryptor, decryptor}, upstream, downstream) do
-    {_len, id, data} = Flow.Helpers.VarintHelper.read_length_prefixed_packet(upstream)
+  def read_from_upstream({encryptor, decryptor}, _upstream, downstream) do
+    # upstream = :ets.first(:upstream)
+    [{:upstream, upstream}] = :ets.lookup(:upstream, :upstream)
+    {len, id, data} = Flow.Helpers.VarintHelper.read_length_prefixed_packet(upstream)
+    # IO.puts("probably sending packet id #{id} len #{len} to downstream")
 
     case id do
+      0x02 ->
+        nil
+
       0x17 ->
         {channel, brand} = Flow.Packets.Login.s_read_plugin_message(data)
 
