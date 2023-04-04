@@ -7,7 +7,9 @@ Run the proxy with
 
 ```mix run --no-halt```
 
-The proxy will listen on port 5555, and proxy connections to 25565
+The proxy will listen on port 5557, and proxy connections to 127.0.0.1:25565
+
+Alternatively, run the proxy with `bash a.sh` or `bash b.sh`, and the proxy will run on 5555 and 5556 respectively.
 
 # Version support
 
@@ -35,7 +37,7 @@ The proxy will listen on port 5555, and proxy connections to 25565
 - [x] Custom status handler
 - [ ] Server transfer
 - [ ] Plugin support (?)
-- [-] Cluster support
+- [ ] Cluster support
 - [ ] Forge support
 - [ ] Fabric support
 - [ ] Bungeecord compatible transfers
