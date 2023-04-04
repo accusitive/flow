@@ -15,7 +15,7 @@ Alternatively, run the proxy with `bash a.sh` or `bash b.sh`, and the proxy will
 
 | Version | Passthrough | Transferring | Planned |
 |---------|-------------|--------------|---------|
-| 1.19.4  | Yes         | No           | Yes     |
+| 1.19.4  | Yes         | Yes           | Yes     |
 | 1.19.3  | No          | No           | Yes     |
 | 1.19.2  | No          | No           | Yes     |
 | 1.19.1  | No          | No           | Yes     |
@@ -42,3 +42,13 @@ Alternatively, run the proxy with `bash a.sh` or `bash b.sh`, and the proxy will
 - [ ] Fabric support
 - [ ] Bungeecord compatible transfers
 - [x] Velocity Modern Forwarding for 1.13+
+
+# Velocity modern forwarding is used by default
+Ensure that you have
+```settings:
+  velocity-support:
+    enabled: true
+    online-mode: true
+    secret: 'secret'
+``` 
+in your paper.yml file. Yes. the secret is 'secret'

@@ -31,3 +31,4 @@ lib/hexdump.ex
 
 /target
 /priv
+/TestServer

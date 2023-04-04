@@ -198,7 +198,7 @@ defmodule Flow.Helpers.ConnectionHelper do
         Flow.Helpers.VarintHelper.write_encrypted_length_id_prefixed_packet(
           socket,
           enc,
-          0x41,
+          Flow.Versions.respawn(kv[:version]),
           respawn
         )
 

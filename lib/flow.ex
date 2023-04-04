@@ -102,11 +102,20 @@ defmodule Flow.Handshake do
       end
 
     # IO.puts("Sucessfully Read packet with len #{len} id #{id}")
+    version = kv[:version]
+    session = Flow.Versions.session(version)
 
     case {state, id} do
       {0, 0x00} ->
         {pv, _add, _port, next_state} = Flow.Packets.Handshaking.s_read_handshake(data)
-        Flow.Handshake.loop(socket, next_state, Map.put(kv, :pv, pv), crypto_state)
+        version = Flow.Versions.get_version(pv)
+
+        Flow.Handshake.loop(
+          socket,
+          next_state,
+          Map.merge(kv, %{pv: pv, version: version}),
+          crypto_state
+        )
 
       # Status request
       {1, 0x00} ->
@@ -207,7 +216,7 @@ defmodule Flow.Handshake do
 
         {:ok, _pid} =
           Task.Supervisor.start_child(Flow.TaskSupervisor, fn ->
-            read_from_upstream(crypto_state, upstream, socket)
+            read_from_upstream(crypto_state, kv, socket)
           end)
 
         Flow.Handshake.loop(
@@ -257,7 +266,7 @@ defmodule Flow.Handshake do
 
       # Player Session
       # Cancel this packet, otherwise the server will kick the player
-      {3, 0x06} ->
+      {3, i} when i == session ->
         # IO.puts("Cancelled Session Packet")
 
         Flow.Handshake.loop(
@@ -281,17 +290,19 @@ defmodule Flow.Handshake do
     end
   end
 
-  def read_from_upstream({encryptor, decryptor}, _upstream, downstream) do
+  def read_from_upstream({encryptor, decryptor}, kv, downstream) do
     # upstream = :ets.first(:upstream)
     [{:upstream, upstream}] = :ets.lookup(:upstream, :upstream)
     {len, id, data} = Flow.Helpers.VarintHelper.read_length_prefixed_packet(upstream)
     # IO.puts("probably sending packet id #{id} len #{len} to downstream")
 
+    plugin_message = Flow.Versions.plugin_message(kv[:version])
+
     case id do
       0x02 ->
         nil
 
-      0x17 ->
+      i when i == plugin_message ->
         {channel, brand} = Flow.Packets.Login.s_read_plugin_message(data)
 
         case channel do
@@ -310,7 +321,7 @@ defmodule Flow.Handshake do
             Flow.Helpers.VarintHelper.write_encrypted_length_id_prefixed_packet(
               downstream,
               encryptor,
-              0x17,
+              i,
               plugin
             )
 
@@ -332,7 +343,7 @@ defmodule Flow.Handshake do
         )
     end
 
-    read_from_upstream({encryptor, decryptor}, upstream, downstream)
+    read_from_upstream({encryptor, decryptor}, kv, downstream)
   end
 
   def has_joined() do
