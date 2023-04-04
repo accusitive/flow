@@ -35,8 +35,8 @@ The proxy will listen on port 5555, and proxy connections to 25565
 - [x] Custom status handler
 - [ ] Server transfer
 - [ ] Plugin support (?)
-- [ ] Cluster support
+- [-] Cluster support
 - [ ] Forge support
 - [ ] Fabric support
 - [ ] Bungeecord compatible transfers
-- [ ] Velocity Modern Forwarding for 1.13+
+- [x] Velocity Modern Forwarding for 1.13+

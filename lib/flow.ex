@@ -2,7 +2,15 @@ defmodule Flow.Application do
   use Application
 
   def start(_type, _args) do
+    topologies = [
+      example: [
+        strategy: Cluster.Strategy.Epmd,
+        config: [hosts: [:"a@127.0.0.1", :"b@127.0.0.1"]]
+      ]
+    ]
+
     children = [
+      {Cluster.Supervisor, [topologies, [name: Flow.ClusterSupervisor]]},
       {Flow.ListenerSup, {}},
       {Task.Supervisor, name: Flow.TaskSupervisor}
     ]
@@ -55,8 +63,15 @@ defmodule Flow.ListenerSup do
 
   @impl true
   def init({}) do
+    port =
+      case node() do
+        :"a@127.0.0.1" -> 5555
+        :"b@127.0.0.1" -> 5556
+        _ -> 5557
+      end
+
     children = [
-      {Flow.Listeners.Minecraft, [{:port, 5555}]}
+      {Flow.Listeners.Minecraft, [{:port, port}]}
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
@@ -173,17 +188,57 @@ defmodule Flow.Handshake do
           Flow.Packets.Login.c_write_login_start(kv[:name], kv[:uuid])
         )
 
+        # Velocity Modern Forwarding setup
+        # Logic from https://github.com/valence-rs/valence/blob/d85b7f5e896fece509137c7769a043abf3ceb76b/src/server/login.rs#L199
+
+        {_len, _id, data} = Flow.Helpers.VarintHelper.read_length_prefixed_packet(upstream)
+        IO.puts("#{inspect(data)}")
+
+        {message_id, _brand, max_supported_forwarding_version} =
+          Flow.Packets.Login.s_read_plugin_request(data)
+
+        case max_supported_forwarding_version do
+          <<0x4>> ->
+            IO.puts("forwarding 4")
+
+            version = Varint.LEB128.encode(4)
+            ip = Flow.Helpers.VarintHelper.write_mc_string("100.100.100.100")
+
+            uuid = <<kv[:uuid]::128>>
+            username = Flow.Helpers.VarintHelper.write_mc_string(kv[:name])
+
+            properties_len = Varint.LEB128.encode(length(properties))
+            props = Flow.Packets.Login.write_properties(properties)
+
+            idk = version <> ip <> uuid <> username <> properties_len <> props
+            signature = :crypto.mac(:hmac, :sha256, "secret", idk)
+
+            Flow.Helpers.VarintHelper.write_length_id_prefixed_packet(
+              upstream,
+              0x02,
+              Flow.Packets.Login.c_write_plugin_response(message_id, 1, signature <> idk)
+            )
+
+          _ ->
+            IO.puts("Unknown Forwarding version, ignoring")
+        end
+
+        # :crypto.mac(:hmac, :sha256, "secret", "test")
+
         # if id isnt 0x02, the login wasn't successful
         # TODO: handle this ^ and disconnect player
-        {_len, _id, _data} = Flow.Helpers.VarintHelper.read_length_prefixed_packet(upstream)
-        {_len, id, data} = Flow.Helpers.VarintHelper.read_length_prefixed_packet(upstream)
-        IO.puts("Got packet from upstream #{id}")
+        {_len, id1, _data} = Flow.Helpers.VarintHelper.read_length_prefixed_packet(upstream)
+
+        {_len, play_game_id, data} =
+          Flow.Helpers.VarintHelper.read_length_prefixed_packet(upstream)
+
+        IO.puts("Got packet from upstream #{id1} #{play_game_id}")
 
         # Login PLAY packet
         Flow.Helpers.VarintHelper.write_encrypted_length_id_prefixed_packet(
           socket,
           encryptor,
-          id,
+          play_game_id,
           data
         )
 

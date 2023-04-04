@@ -28,7 +28,8 @@ defmodule Flow.MixProject do
       {:elixir_uuid, "~> 1.2"},
       # {:rsa_ex, "~> 0.4"}
       {:x509, "~> 0.8.5"},
-      {:httpoison, "~> 2.0"}
+      {:httpoison, "~> 2.0"},
+      {:libcluster, "~> 3.3"}
       # {:dep_from_hexpm, "~> 0.3.0"},
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]
