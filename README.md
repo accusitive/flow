@@ -1,21 +1,42 @@
 # Flow
 
-**TODO: Add description**
+Some minecraft proxy I wrote in elixir
 
-## Installation
+# Running
+Run the proxy with
 
-If [available in Hex](https://hex.pm/docs/publish), the package can be installed
-by adding `flow` to your list of dependencies in `mix.exs`:
+```mix run --no-halt```
 
-```elixir
-def deps do
-  [
-    {:flow, "~> 0.1.0"}
-  ]
-end
-```
+The proxy will listen on port 5555, and proxy connections to 25565
 
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/flow>.
+# Version support
 
+| Version | Passthrough | Transferring | Planned |
+|---------|-------------|--------------|---------|
+| 1.19.4  | Yes         | No           | Yes     |
+| 1.19.3  | No          | No           | Yes     |
+| 1.19.2  | No          | No           | Yes     |
+| 1.19.1  | No          | No           | Yes     |
+| 1.19    | No          | No           | Yes     |
+| 1.18.x  | No          | No           | Yes     |
+| 1.17.x  | No          | No           | Later   |
+| 1.16.x  | No          | No           | Yes     |
+| 1.15.x  | No          | No           | Later   |
+| 1.14.x  | No          | No           | Later   |
+| 1.13.x  | No          | No           | Yes     |
+| 1.12.x  | No          | No           | Later   |
+| < 1.12  | No          | No           | No      |
+
+
+# Features
+
+- [x] Player <> proxy encryption
+- [ ] Player <> proxy compression
+- [x] Custom status handler
+- [ ] Server transfer
+- [ ] Plugin support (?)
+- [ ] Cluster support
+- [ ] Forge support
+- [ ] Fabric support
+- [ ] Bungeecord compatible transfers
+- [ ] Velocity Modern Forwarding for 1.13+
