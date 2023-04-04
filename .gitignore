@@ -24,3 +24,5 @@ flow-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+#https://raw.githubusercontent.com/pcorey/bitcoin_network/master/lib/hexdump.ex
+lib/hexdump.ex

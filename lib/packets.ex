@@ -142,9 +142,16 @@ defmodule Flow.Packets.Login do
     channel <> data
   end
 
+  def s_read_plugin_message(data) do
+    {channel, data} = Flow.Helpers.VarintHelper.read_mc_string(data)
+
+    {channel, data}
+  end
+
   def c_write_plugin_request(message_id, channel, data) do
     message_id = Varint.LEB128.encode(message_id)
     channel = Flow.Helpers.VarintHelper.write_mc_string(channel)
+
     message_id <> channel <> data
   end
 

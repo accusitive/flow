@@ -250,15 +250,6 @@ defmodule Flow.Handshake do
             read_from_upstream(crypto_state, upstream, socket)
           end)
 
-        plugin = Flow.Packets.Login.c_write_plugin_message("minecraft:brand", <<"flow">>)
-
-        Flow.Helpers.VarintHelper.write_encrypted_length_id_prefixed_packet(
-          socket,
-          encryptor,
-          0x17,
-          plugin
-        )
-
         Flow.Handshake.loop(
           socket,
           3,
@@ -296,12 +287,47 @@ defmodule Flow.Handshake do
   def read_from_upstream({encryptor, decryptor}, upstream, downstream) do
     {_len, id, data} = Flow.Helpers.VarintHelper.read_length_prefixed_packet(upstream)
 
-    Flow.Helpers.VarintHelper.write_encrypted_length_id_prefixed_packet(
-      downstream,
-      encryptor,
-      id,
-      data
-    )
+    case id do
+      0x17 ->
+        {channel, brand} = Flow.Packets.Login.s_read_plugin_message(data)
+
+        case channel do
+          "minecraft:brand" ->
+            {brand, _} = Flow.Helpers.VarintHelper.read_mc_string(brand)
+
+            plugin =
+              Flow.Packets.Login.c_write_plugin_message(
+                "minecraft:brand",
+                Flow.Helpers.VarintHelper.write_mc_string("§c#{brand} §avia §bFlow§r")
+              )
+
+            # IO.puts("#{inspect data}")
+            data |> Hexdump.to_string() |> IO.puts()
+
+            Flow.Helpers.VarintHelper.write_encrypted_length_id_prefixed_packet(
+              downstream,
+              encryptor,
+              0x17,
+              plugin
+            )
+
+          _ ->
+            Flow.Helpers.VarintHelper.write_encrypted_length_id_prefixed_packet(
+              downstream,
+              encryptor,
+              id,
+              data
+            )
+        end
+
+      _ ->
+        Flow.Helpers.VarintHelper.write_encrypted_length_id_prefixed_packet(
+          downstream,
+          encryptor,
+          id,
+          data
+        )
+    end
 
     read_from_upstream({encryptor, decryptor}, upstream, downstream)
   end
