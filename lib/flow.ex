@@ -20,8 +20,7 @@ end
 defmodule Flow.Protocols.Minecraft do
   alias Flow.Handshake
   @behaviour :ranch_protocol
-  @timeout 5000
-  @afterconnect_delay 1000
+
   def start_link(ref, transport, opts) do
     {:ok, spawn_link(__MODULE__, :init, [ref, transport, opts])}
   end
@@ -39,11 +38,6 @@ defmodule Flow.Protocols.Minecraft do
     # IO.puts("handling new client")
     Handshake.loop(socket, 0, %{}, {:none})
   end
-
-  # def loop(socket, transport) do
-
-  #   loop(socket, transport)
-  # end
 end
 
 defmodule Flow.Listeners.Minecraft do
@@ -63,7 +57,6 @@ defmodule Flow.ListenerSup do
   def init({}) do
     children = [
       {Flow.Listeners.Minecraft, [{:port, 5555}]}
-      # {Nexus.Listeners.EchoServer, [{:port, 5556}]}
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
@@ -71,13 +64,9 @@ defmodule Flow.ListenerSup do
 end
 
 defmodule Flow.Handshake do
-  alias X509.PrivateKey
-
-  def loop(socket, state, kv, encryption_status, upstream \\ nil) do
-    IO.puts("Looping with state #{state}")
-
-    {len, id, data} =
-      case encryption_status do
+  def loop(socket, state, kv, crypto_state, upstream \\ nil) do
+    {_len, id, data} =
+      case crypto_state do
         {:none} ->
           Flow.Helpers.VarintHelper.read_length_prefixed_packet(socket)
 
@@ -86,13 +75,12 @@ defmodule Flow.Handshake do
           Flow.Helpers.VarintHelper.read_encrypted_length_prefixed_packet(socket, decryptor)
       end
 
-    IO.puts("Sucessfully Read packet with len #{len} id #{id}")
+    # IO.puts("Sucessfully Read packet with len #{len} id #{id}")
 
     case {state, id} do
       {0, 0x00} ->
         {pv, _add, _port, next_state} = Flow.Packets.Handshaking.s_read_handshake(data)
-        # IO.puts("#{pv} #{next_state}")
-        Flow.Handshake.loop(socket, next_state, Map.merge(kv, %{pv: pv}), encryption_status)
+        Flow.Handshake.loop(socket, next_state, Map.merge(kv, %{pv: pv}), crypto_state)
 
       # Status request
       {1, 0x00} ->
@@ -100,7 +88,7 @@ defmodule Flow.Handshake do
         response = Flow.Packets.Status.c_write_status_response(kv.pv)
         Flow.Helpers.VarintHelper.write_length_id_prefixed_packet(socket, 0x0, response)
 
-        Flow.Handshake.loop(socket, state, kv, encryption_status)
+        Flow.Handshake.loop(socket, state, kv, crypto_state)
 
       # Ping request
       {1, 0x01} ->
@@ -112,11 +100,8 @@ defmodule Flow.Handshake do
       # Login start
       {2, 0x00} ->
         {name, uuid} = Flow.Packets.Login.s_read_login_start(data)
-        [{:priv, priv}] = :ets.lookup(:keys, :priv)
+        # [{:priv, priv}] = :ets.lookup(:keys, :priv)
         [{:pub, pub}] = :ets.lookup(:keys, :pub)
-
-        IO.puts("#{inspect(priv)}")
-        IO.puts("#{inspect(pub)}")
 
         Flow.Helpers.VarintHelper.write_length_id_prefixed_packet(
           socket,
@@ -128,7 +113,7 @@ defmodule Flow.Handshake do
           socket,
           state,
           Map.merge(kv, %{uuid: uuid, name: name}),
-          encryption_status
+          crypto_state
         )
 
       # Encryption Response
@@ -140,6 +125,10 @@ defmodule Flow.Handshake do
         shared = :public_key.decrypt_private(shared_secret, priv)
         verify = :public_key.decrypt_private(verify_token, priv)
 
+        if verify != <<0x01, 0x01, 0x02, 0x03>> do
+          # In theory kick?
+        end
+
         der = X509.PublicKey.to_der(pub)
 
         verif_hash = Flow.Helpers.StupidSha.sha(shared <> der)
@@ -148,36 +137,11 @@ defmodule Flow.Handshake do
         url =
           "https://sessionserver.mojang.com/session/minecraft/hasJoined?username=#{kv[:name]}&serverId=#{verif_hash}"
 
-        {:ok, %{status_code: status_code, body: body}} = HTTPoison.get(url)
-        IO.puts("status code #{status_code}")
-        # IO.puts("#{inspect response.body}")
+        {:ok, %{status_code: _status_code, body: body}} = HTTPoison.get(url)
         j = Jason.decode!(body)
-        # %{properties: props} = j
-        # IO.puts("j #{inspect(j)} ")
-        # IO.puts("j #{inspect(Map.fetch(j, :properties))}")
 
-        {id, name, properties} =
-          case j do
-            %{
-              "id" => id,
-              "name" => name,
-              "properties" => properties
-            } ->
-              IO.puts("#{id}, #{name} #{inspect(properties)}")
-              {id, name, properties}
+        properties = j["properties"]
 
-            # Do something with id, name, and properties
-            _ ->
-              # IO.puts("clam")
-              raise "failed to parse j"
-              # Handle other cases
-          end
-
-        IO.puts(
-          "verify token #{byte_size(shared_secret)} #{byte_size(verify_token)} #{inspect(shared)} #{inspect(verify)}"
-        )
-
-        # TODO: what is the boolean
         :crypto.start()
         encryptor = :crypto.crypto_init(:aes_cfb8, shared, shared, true)
         decryptor = :crypto.crypto_init(:aes_cfb8, shared, shared, false)
@@ -193,29 +157,29 @@ defmodule Flow.Handshake do
           login_success
         )
 
-        {:ok, dest} =
+        {:ok, upstream} =
           :gen_tcp.connect('localhost', 25565, [:binary, active: false, packet: 0, nodelay: true])
 
         # :gen_tcp.send()
         Flow.Helpers.VarintHelper.write_length_id_prefixed_packet(
-          dest,
+          upstream,
           0x0,
           Flow.Packets.Handshaking.c_write_handshake(kv[:pv], "localhost", 25565, 2)
         )
 
         Flow.Helpers.VarintHelper.write_length_id_prefixed_packet(
-          dest,
+          upstream,
           0x0,
           Flow.Packets.Login.c_write_login_start(kv[:name], kv[:uuid])
         )
 
-        # id id isnt 0x02, the login wasn't successful
-        {_len, id, data} = Flow.Helpers.VarintHelper.read_length_prefixed_packet(dest)
-        IO.puts("Got packet from dest #{id}")
+        # if id isnt 0x02, the login wasn't successful
+        # TODO: handle this ^ and disconnect player
+        {_len, _id, _data} = Flow.Helpers.VarintHelper.read_length_prefixed_packet(upstream)
+        {_len, id, data} = Flow.Helpers.VarintHelper.read_length_prefixed_packet(upstream)
+        IO.puts("Got packet from upstream #{id}")
 
-        {_len, id, data} = Flow.Helpers.VarintHelper.read_length_prefixed_packet(dest)
-        IO.puts("Got packet from dest #{id}")
-
+        # Login PLAY packet
         Flow.Helpers.VarintHelper.write_encrypted_length_id_prefixed_packet(
           socket,
           encryptor,
@@ -225,53 +189,57 @@ defmodule Flow.Handshake do
 
         # plugin = Flow.Packets.Login.c_write_plugin_message("flow:test", <<>>)
         # Flow.Helpers.VarintHelper.write_encrypted_length_id_prefixed_packet(socket, crypto_state, 0x17, plugin)
-        # plugin = Flow.Packets.Login.c_write_plugin_message("flow:test", <<>>)
-        # Flow.Helpers.VarintHelper.write_encrypted_length_id_prefixed_packet(socket, crypto_state, 0x17, plugin)
 
         {:ok, _pid} =
           Task.Supervisor.start_child(Flow.TaskSupervisor, fn ->
-            read_from_upstream(crypto_state, dest, socket)
+            read_from_upstream(crypto_state, upstream, socket)
           end)
 
-        # :timer.sleep(1000)
+        plugin = Flow.Packets.Login.c_write_plugin_message("minecraft:brand", <<"flow">>)
+
+        Flow.Helpers.VarintHelper.write_encrypted_length_id_prefixed_packet(
+          socket,
+          encryptor,
+          0x17,
+          plugin
+        )
+
         Flow.Handshake.loop(
           socket,
           3,
           kv,
           {:some, crypto_state},
-          dest
+          upstream
         )
+
       # Player Session
       # Cancel this packet, otherwise the server will kick the player
       {3, 0x06} ->
-        IO.puts("SHoudl dc")
+        # IO.puts("Cancelled Session Packet")
+
         Flow.Handshake.loop(
           socket,
           state,
           kv,
-          encryption_status,
+          crypto_state,
           upstream
         )
 
       {3, _id2} ->
-        IO.puts("received packet in play, forwarding")
         Flow.Helpers.VarintHelper.write_length_id_prefixed_packet(upstream, id, data)
 
         Flow.Handshake.loop(
           socket,
           state,
           kv,
-          encryption_status,
+          crypto_state,
           upstream
         )
     end
-
-    # loop(socket)
   end
 
   def read_from_upstream({encryptor, decryptor}, upstream, downstream) do
     {_len, id, data} = Flow.Helpers.VarintHelper.read_length_prefixed_packet(upstream)
-    # IO.puts("read from upstream: #{id}")
 
     Flow.Helpers.VarintHelper.write_encrypted_length_id_prefixed_packet(
       downstream,
@@ -280,8 +248,9 @@ defmodule Flow.Handshake do
       data
     )
 
-    # IO.puts("proxied packet with id #{id}")
-
     read_from_upstream({encryptor, decryptor}, upstream, downstream)
+  end
+
+  def has_joined() do
   end
 end

@@ -1,13 +1,10 @@
 defmodule Flow.Helpers.VarintHelper do
-  alias ElixirSense.Core.State.VarInfo
-
   def read_byte_by_byte(get_next_byte, acc, previous) do
     current = get_next_byte.(acc)
 
     if Flow.Helpers.VarintHelper.does_have_next_byte(current) do
       read_byte_by_byte(get_next_byte, acc + 1, previous <> current)
     else
-      # IO.puts("read byte by byte: #{inspect(previous <> current)}")
       previous <> current
     end
   end
@@ -25,34 +22,24 @@ defmodule Flow.Helpers.VarintHelper do
     {len, _rest0} =
       Varint.LEB128.decode(Flow.Helpers.VarintHelper.read_byte_by_byte(read_one_byte, 0, <<>>))
 
-    # IO.puts("Read packet with len #{len}")
-
     if len == 0 do
       {len, 0, <<>>}
     else
       {:ok, data} = :gen_tcp.recv(socket, len)
-
       {id, data} = Varint.LEB128.decode(data)
-      # IO.puts("Read packet with id #{id}")
 
       {len, id, data}
     end
   end
+
   def read_encrypted_length_prefixed_packet(socket, decryptor) do
-    # {:ok, data} = :gen_tcp.recv(socket, 64)
-    # :crypto.crypto_update(decryptor, data)
-    # IO.puts("recv organically got #{byte_size(data)}")
-    read_one_byte = fn ac ->
+    read_one_byte = fn _ac ->
       {:ok, byte} = :gen_tcp.recv(socket, 1)
-      IO.puts("reading #{ac} byte (#{inspect byte})")
-      # padded_byte = Flow.Helpers.PadHelpers.pad(byte, 64)
       :crypto.crypto_update(decryptor, byte)
     end
 
     {len, _rest0} =
       Varint.LEB128.decode(Flow.Helpers.VarintHelper.read_byte_by_byte(read_one_byte, 0, <<>>))
-
-    # IO.puts("Read packet with len #{len}")
 
     if len == 0 do
       {len, 0, <<>>}
@@ -60,46 +47,52 @@ defmodule Flow.Helpers.VarintHelper do
       {:ok, data} = :gen_tcp.recv(socket, len)
       data = :crypto.crypto_update(decryptor, data)
       {id, data} = Varint.LEB128.decode(data)
-      # IO.puts("Read packet with id #{id}")
 
       {len, id, data}
     end
   end
+
   def write_length_id_prefixed_packet(socket, id, data) do
     full = Varint.LEB128.encode(id) <> data
     len = Varint.LEB128.encode(byte_size(full))
     :gen_tcp.send(socket, len <> full)
   end
+
   def write_encrypted_length_id_prefixed_packet(socket, crypto_state, id, data) do
     full = Varint.LEB128.encode(id) <> data
     len = Varint.LEB128.encode(byte_size(full))
     enc = :crypto.crypto_update(crypto_state, len <> full)
-    # IO.puts("#{inspect enc}")
+
     :gen_tcp.send(socket, enc)
   end
+
   def read_mc_string(data) do
     {string_length, data} = Varint.LEB128.decode(data)
     <<string::binary-size(string_length), data::binary>> = data
 
     {string, data}
   end
+
   def write_mc_string(s) do
     len = Varint.LEB128.encode(byte_size(s))
     data = <<s::bitstring>>
     len <> data
   end
+
   def read_length_prefixed_binary(data) do
     {bin_length, data} = Varint.LEB128.decode(data)
     <<bin::binary-size(bin_length), data::binary>> = data
 
     {bin, data}
   end
+
   def write_length_prefixed_binary(b) do
     len = Varint.LEB128.encode(byte_size(b))
-    # data = <<b::binary>>
+
     len <> b
   end
 end
+
 defmodule Flow.Helpers.OfflinePlayerUUID do
   @namespace "OfflinePlayer"
 
@@ -107,9 +100,11 @@ defmodule Flow.Helpers.OfflinePlayerUUID do
     UUID.uuid3(@namespace, username)
   end
 end
+
 defmodule Flow.Helpers.ConnectionHelper do
-#TODO
+  # TODO
 end
+
 defmodule Flow.Helpers.PadHelpers do
   def pad(data, block_size) do
     to_add = block_size - rem(byte_size(data), block_size)
@@ -121,6 +116,7 @@ defmodule Flow.Helpers.PadHelpers do
     :binary.part(data, 0, byte_size(data) - to_remove)
   end
 end
+
 # Source: https://github.com/thecodeboss/minecraft/blob/f40fd388058deb176dbca77fe3f11e1d605c9a47/lib/minecraft/crypto/sha.ex
 # i spent hours on this and really didnt want to copy/paste but alas
 
@@ -147,7 +143,6 @@ end
 # SOFTWARE.
 
 defmodule Flow.Helpers.StupidSha do
-
   def sha(message) do
     case :crypto.hash(:sha, message) do
       <<hash::signed-integer-160>> when hash < 0 ->

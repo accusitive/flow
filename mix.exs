@@ -16,7 +16,6 @@ defmodule Flow.MixProject do
     [
       extra_applications: [:logger],
       mod: {Flow.Application, []}
-
     ]
   end
 
@@ -26,7 +25,7 @@ defmodule Flow.MixProject do
       {:ranch, "~> 2.1"},
       {:varint, "~> 1.3.0"},
       {:jason, "~> 1.4.0"},
-      {:elixir_uuid, "~> 1.2" },
+      {:elixir_uuid, "~> 1.2"},
       # {:rsa_ex, "~> 0.4"}
       {:x509, "~> 0.8.5"},
       {:httpoison, "~> 2.0"}

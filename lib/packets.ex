@@ -4,6 +4,7 @@ defmodule Flow.Packets.Handshaking do
     {server_address, data} = Flow.Helpers.VarintHelper.read_mc_string(data)
     <<port::16, data::binary>> = data
     {next_state, _data} = Varint.LEB128.decode(data)
+
     {protocol_version, server_address, port, next_state}
   end
 
@@ -47,17 +48,16 @@ defmodule Flow.Packets.Status do
     json_string = Jason.encode!(default_response)
     data = Varint.LEB128.encode(byte_size(json_string))
 
-    # IO.puts("#{inspect data}")
     data <> json_string
   end
 
   def s_read_ping_request(data) do
     <<payload::64, _data::binary>> = data
+
     payload
   end
 
   def c_write_ping_response(payload) do
-    # <<payload::64, data::binary>> = data
     <<payload::big-signed-64>>
   end
 end
@@ -101,6 +101,7 @@ defmodule Flow.Packets.Login do
   def s_read_encryption_response(data) do
     {shared_secret, data} = Flow.Helpers.VarintHelper.read_length_prefixed_binary(data)
     {verify_token, _data} = Flow.Helpers.VarintHelper.read_length_prefixed_binary(data)
+
     {shared_secret, verify_token}
   end
 
@@ -122,23 +123,16 @@ defmodule Flow.Packets.Login do
         value = Flow.Helpers.VarintHelper.write_mc_string(xvalue)
         signed = <<xsigned::8>>
 
-        # if x.signed == 1 do
         signature = Flow.Helpers.VarintHelper.write_mc_string(xsignature)
         name <> value <> signed <> signature <> acc
-        # else
-        #   {name <> value <> signed <> acc}
-        # end
       end)
-
-    # Enum.flat_map(properties, fn a, b ->
-    #     name = Flow.Helpers.VarintHelper.write_mc_string()
-    # end)
 
     uuid <> username <> properties_len <> full_props
   end
 
   def c_write_plugin_message(channel, data) do
     channel = Flow.Helpers.VarintHelper.write_mc_string(channel)
+
     channel <> data
   end
 end
