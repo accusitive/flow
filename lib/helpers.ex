@@ -123,8 +123,8 @@ defmodule Flow.Helpers.ConnectionHelper do
     # Velocity Modern Forwarding setup
     # Logic from https://github.com/valence-rs/valence/blob/d85b7f5e896fece509137c7769a043abf3ceb76b/src/server/login.rs#L199
 
-    {_len, _id, data} = Flow.Helpers.VarintHelper.read_length_prefixed_packet(upstream)
-    IO.puts("#{inspect(data)}")
+    {_len, id, data} = Flow.Helpers.VarintHelper.read_length_prefixed_packet(upstream)
+    IO.puts("clam #{id} #{inspect(data)}")
 
     {message_id, _brand, max_supported_forwarding_version} =
       Flow.Packets.Login.s_read_plugin_request(data)
@@ -152,7 +152,7 @@ defmodule Flow.Helpers.ConnectionHelper do
         )
 
       _ ->
-        IO.puts("Unknown Forwarding version, ignoring")
+        IO.puts("Unknown Forwarding version #{}, (packet #{id} pv #{kv[:pv]}) ignoring")
     end
 
     # :crypto.mac(:hmac, :sha256, "secret", "test")

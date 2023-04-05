@@ -229,7 +229,7 @@ defmodule Flow.Handshake do
 
       {3, 0x05} ->
         {message, _data} = Flow.Packets.Play.s_read_chat_message(data)
-        IO.puts("#{message}")
+        IO.puts("chat message: #{message}")
 
         case message do
           "2" ->
@@ -266,7 +266,7 @@ defmodule Flow.Handshake do
 
       # Player Session
       # Cancel this packet, otherwise the server will kick the player
-      {3, i} when i == session ->
+      {3, ^session} ->
         # IO.puts("Cancelled Session Packet")
 
         Flow.Handshake.loop(
@@ -302,7 +302,7 @@ defmodule Flow.Handshake do
       0x02 ->
         nil
 
-      i when i == plugin_message ->
+      ^plugin_message ->
         {channel, brand} = Flow.Packets.Login.s_read_plugin_message(data)
 
         case channel do
@@ -321,7 +321,7 @@ defmodule Flow.Handshake do
             Flow.Helpers.VarintHelper.write_encrypted_length_id_prefixed_packet(
               downstream,
               encryptor,
-              i,
+              plugin_message,
               plugin
             )
 
