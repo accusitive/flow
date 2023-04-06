@@ -134,7 +134,7 @@ defmodule Flow.Handshake do
 
       # Login start
       {2, 0x00} ->
-        {name, uuid} = Flow.Packets.Login.s_read_login_start(data)
+        {name, sig, uuid} = Flow.Packets.Login.s_read_login_start(kv[:version], data)
         # [{:priv, priv}] = :ets.lookup(:keys, :priv)
         [{:pub, pub}] = :ets.lookup(:keys, :pub)
 
@@ -147,21 +147,29 @@ defmodule Flow.Handshake do
         Flow.Handshake.loop(
           socket,
           state,
-          Map.merge(kv, %{uuid: uuid, name: name}),
+          Map.merge(kv, %{uuid: uuid, name: name, sig: sig}),
           crypto_state
         )
 
       # Encryption Response
       {2, 0x01} ->
-        {shared_secret, verify_token} = Flow.Packets.Login.s_read_encryption_response(data)
+        {shared_secret, verify_token} =
+          case Flow.Packets.Login.s_read_encryption_response(kv[:version], data) do
+            {:verify, shared_secret, verify_token} -> {shared_secret, verify_token}
+            {:no_verify, shared_secret, _salt, _message_signature} -> {shared_secret, :none}
+          end
+
         [{:priv, priv}] = :ets.lookup(:keys, :priv)
         [{:pub, pub}] = :ets.lookup(:keys, :pub)
 
         shared = :public_key.decrypt_private(shared_secret, priv)
-        verify = :public_key.decrypt_private(verify_token, priv)
 
-        if verify != <<0x01, 0x01, 0x02, 0x03>> do
-          # In theory kick?
+        if verify_token != :none do
+          verify = :public_key.decrypt_private(verify_token, priv)
+
+          if verify != <<0x01, 0x01, 0x02, 0x03>> do
+            # In theory kick?
+          end
         end
 
         der = X509.PublicKey.to_der(pub)
@@ -299,6 +307,7 @@ defmodule Flow.Handshake do
     plugin_message = Flow.Versions.plugin_message(kv[:version])
 
     case id do
+      # play game
       0x02 ->
         nil
 

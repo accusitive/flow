@@ -63,24 +63,72 @@ defmodule Flow.Packets.Status do
 end
 
 defmodule Flow.Packets.Login do
-  def s_read_login_start(data) do
+  alias Flow.Versions
+
+  def s_read_login_start(version, data) when version == :MC_1_19_4 or version == :MC_1_19_3 do
     {name, data} = Flow.Helpers.VarintHelper.read_mc_string(data)
     <<has_uuid::8, data::binary>> = data
 
-    if has_uuid == 1 do
-      <<uuid::128, _data::binary>> = data
-      {name, uuid}
-    else
-      {name, Flow.Helpers.OfflinePlayerUUID.generate(name)}
-    end
+    uuid =
+      if has_uuid == 1 do
+        <<uuid::128, _data::binary>> = data
+        uuid
+      else
+        Flow.Helpers.OfflinePlayerUUID.generate(name)
+      end
+
+    {name, :none, uuid}
   end
 
-  def c_write_login_start(name, uuid) do
+  def s_read_login_start(version, data) when version == :MC_1_19_1 do
+    {name, data} = Flow.Helpers.VarintHelper.read_mc_string(data)
+    <<has_sig::8, data::binary>> = data
+
+    {sig, data} =
+      if has_sig == 1 do
+        <<timestamp::64, data::binary>> = data
+        {public_key, data} = Flow.Helpers.VarintHelper.read_length_prefixed_binary(data)
+        {signature, data} = Flow.Helpers.VarintHelper.read_length_prefixed_binary(data)
+
+        IO.puts("#{byte_size(data)} bytes remaining after reading login_start")
+        {{:some, timestamp, public_key, signature}, data}
+      else
+        {{:none}, data}
+      end
+
+    <<has_uuid::8, data::binary>> = data
+    IO.puts("#{has_uuid}")
+
+    uuid =
+      if has_uuid == 1 do
+        <<uuid::128, data::binary>> = data
+        IO.puts("data fter uuid :: #{Hexdump.to_string(data)} #{uuid}")
+        uuid
+      else
+        # {name, Flow.Helpers.OfflinePlayerUUID.generate(name)}
+        # TODO: fix uuid
+        127_127_127_127
+      end
+
+    {name, sig, uuid}
+  end
+
+  def c_write_login_start(version, name, uuid)
+      when version == :MC_1_19_4 or version == :MC_1_19_3 do
     name = Flow.Helpers.VarintHelper.write_mc_string(name)
     has_uuid = <<1::8>>
     uuid = <<uuid::128>>
 
     name <> has_uuid <> uuid
+  end
+
+  def c_write_login_start(version, name, uuid) when version == :MC_1_19_1 do
+    name = Flow.Helpers.VarintHelper.write_mc_string(name)
+    has_sig_data = <<0::8>>
+    has_uuid = <<1::8>>
+    uuid = <<uuid::128>>
+
+    name <> has_sig_data <> has_uuid <> uuid
   end
 
   @spec c_write_encryption_request(
@@ -98,11 +146,33 @@ defmodule Flow.Packets.Login do
     server_id <> pk <> verify_token
   end
 
-  def s_read_encryption_response(data) do
+  def s_read_encryption_response(version, data)
+      when version == :MC_1_19_4 or version == :MC_1_19_3 do
     {shared_secret, data} = Flow.Helpers.VarintHelper.read_length_prefixed_binary(data)
     {verify_token, _data} = Flow.Helpers.VarintHelper.read_length_prefixed_binary(data)
 
     {shared_secret, verify_token}
+  end
+
+  def s_read_encryption_response(version, data) when version == :MC_1_19_1 do
+    {shared_secret, data} = Flow.Helpers.VarintHelper.read_length_prefixed_binary(data)
+
+    # {verify_token, _data} = Flow.Helpers.VarintHelper.read_length_prefixed_binary(data)
+    <<has_verify_token::8, data::binary>> = data
+
+    case has_verify_token == 1 do
+      true ->
+        {verify_token, data} = Flow.Helpers.VarintHelper.read_length_prefixed_binary(data)
+        {:verify, shared_secret, verify_token}
+
+      false ->
+        <<salt::64, data::binary>> = data
+        {message_signature, data} = Flow.Helpers.VarintHelper.read_length_prefixed_binary(data)
+
+        {:no_verify, shared_secret, salt, message_signature}
+    end
+
+    # {shared_secret, verify_token}
   end
 
   def c_write_login_success(uuid, username, properties) do

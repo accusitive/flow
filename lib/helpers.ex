@@ -81,7 +81,9 @@ defmodule Flow.Helpers.VarintHelper do
 
   def read_length_prefixed_binary(data) do
     {bin_length, data} = Varint.LEB128.decode(data)
+    IO.puts("BIN_LENGTH #{bin_length}")
     <<bin::binary-size(bin_length), data::binary>> = data
+    IO.puts("BIN LENGTH #{byte_size(bin)}")
 
     {bin, data}
   end
@@ -105,7 +107,12 @@ defmodule Flow.Helpers.ConnectionHelper do
   # TODO
   def establish_connection(kv, address, port) do
     {:ok, upstream} =
-      :gen_tcp.connect(to_charlist(address), port, [:binary, active: false, packet: 0, nodelay: true])
+      :gen_tcp.connect(to_charlist(address), port, [
+        :binary,
+        active: false,
+        packet: 0,
+        nodelay: true
+      ])
 
     # :gen_tcp.send()
     Flow.Helpers.VarintHelper.write_length_id_prefixed_packet(
@@ -117,7 +124,7 @@ defmodule Flow.Helpers.ConnectionHelper do
     Flow.Helpers.VarintHelper.write_length_id_prefixed_packet(
       upstream,
       0x0,
-      Flow.Packets.Login.c_write_login_start(kv[:name], kv[:uuid])
+      Flow.Packets.Login.c_write_login_start(kv[:version], kv[:name], kv[:uuid])
     )
 
     # Velocity Modern Forwarding setup
@@ -126,23 +133,40 @@ defmodule Flow.Helpers.ConnectionHelper do
     {_len, id, data} = Flow.Helpers.VarintHelper.read_length_prefixed_packet(upstream)
     IO.puts("clam #{id} #{inspect(data)}")
 
-    {message_id, _brand, max_supported_forwarding_version} =
+    {message_id, brand, max_supported_forwarding_version} =
       Flow.Packets.Login.s_read_plugin_request(data)
 
     case max_supported_forwarding_version do
-      <<0x4>> ->
+      # Modern Lazy
+      <<type>> when type == 0x04 or type == 0x01 or type == 0x03 ->
         IO.puts("forwarding 4")
 
-        version = Varint.LEB128.encode(4)
+        version = Varint.LEB128.encode(type)
         ip = Flow.Helpers.VarintHelper.write_mc_string("100.100.100.100")
 
         uuid = <<kv[:uuid]::128>>
         username = Flow.Helpers.VarintHelper.write_mc_string(kv[:name])
-        IO.puts("#{inspect kv}")
+
         properties_len = Varint.LEB128.encode(length(kv[:properties]))
         props = Flow.Packets.Login.write_properties(kv[:properties])
 
-        idk = version <> ip <> uuid <> username <> properties_len <> props
+        # https://github.com/PaperMC/Paper/commit/c7e118b39425bd3aa817ad9bb5ed40db8266d785#diff-9fadd104fffd865dc4c4ebf135a924d12fd1260c1f37ca7d06332f11d2a0a661
+        # patch 0932
+        sig_data =
+          if type == 0x03 do
+            {:some, timestamp, pk, sig} = kv[:sig]
+            i = <<timestamp::64>>
+            pk = Flow.Helpers.VarintHelper.write_length_prefixed_binary(pk)
+            sig = Flow.Helpers.VarintHelper.write_length_prefixed_binary(sig)
+            has_uuid = 1
+
+            player_key = i <> pk <> sig
+            player_key <> <<has_uuid::8>> <> uuid
+          else
+            <<>>
+          end
+
+        idk = version <> ip <> uuid <> username <> properties_len <> props <> sig_data
         signature = :crypto.mac(:hmac, :sha256, "secret", idk)
 
         Flow.Helpers.VarintHelper.write_length_id_prefixed_packet(
@@ -151,36 +175,64 @@ defmodule Flow.Helpers.ConnectionHelper do
           Flow.Packets.Login.c_write_plugin_response(message_id, 1, signature <> idk)
         )
 
-      _ ->
-        IO.puts("Unknown Forwarding version #{}, (packet #{id} pv #{kv[:pv]}) ignoring")
+      forwarding_version ->
+        IO.puts(
+          "Unknown Forwarding version  #{forwarding_version |> Hexdump.to_string()}, (packet #{id} pv #{kv[:pv]}) ignoring"
+        )
+
+        data |> Hexdump.to_string() |> IO.puts()
+        max_supported_forwarding_version |> Hexdump.to_string() |> IO.puts()
     end
 
-    # :crypto.mac(:hmac, :sha256, "secret", "test")
     upstream
   end
+
   def fully_proxy(socket, upstream, crypto_state, kv, address, port) do
-    new_upstream =
-      Flow.Helpers.ConnectionHelper.establish_connection(kv, address, port)
+    new_upstream = Flow.Helpers.ConnectionHelper.establish_connection(kv, address, port)
 
     {_len, _login_success_id, _login_success_data} =
       Flow.Helpers.VarintHelper.read_length_prefixed_packet(new_upstream)
 
-    {_len, _join_game_id, join_game_data} =
+    {_len, join_game_id, join_game_data} =
       Flow.Helpers.VarintHelper.read_length_prefixed_packet(new_upstream)
 
-    {_, _, gamemode, previous_gamemode, _, _, dimension_type, dimension_name, hashed_seed,
-     _, _, _, _, _, debug, flat, _, _,
-     _} = Flow.Packets.Play.s_read_join_game(join_game_data)
+    {_, _, gamemode, previous_gamemode, _, _, dimension_type, dimension_name, hashed_seed, _, _,
+     _, _, _, debug, flat, _, _, _} = Flow.Packets.Play.s_read_join_game(join_game_data)
 
     # IO.puts("#{inspect(j)}")
 
     # IO.puts("#{id1}, #{id2}")
-    :ets.insert(:upstream, {:upstream, new_upstream})
 
     {:ok, _pid} =
       Task.Supervisor.start_child(Flow.TaskSupervisor, fn ->
-        :timer.sleep(1000)
+        :timer.sleep(2000)
+        {:some, {enc, _dec}} = crypto_state
 
+        respawn =
+          Flow.Packets.Play.c_write_respawn(
+            dimension_type,
+            "minecraft:the_nether",
+            hashed_seed,
+            gamemode,
+            previous_gamemode,
+            debug,
+            flat,
+            0
+          )
+
+
+        Flow.Helpers.VarintHelper.write_encrypted_length_id_prefixed_packet(
+          socket,
+          enc,
+          Flow.Versions.respawn(kv[:version]),
+          respawn
+        )
+        Flow.Helpers.VarintHelper.write_encrypted_length_id_prefixed_packet(
+          socket,
+          enc,
+          join_game_id,
+          join_game_data
+        )
         respawn =
           Flow.Packets.Play.c_write_respawn(
             dimension_type,
@@ -193,7 +245,7 @@ defmodule Flow.Helpers.ConnectionHelper do
             0
           )
 
-        {:some, {enc, _dec}} = crypto_state
+          :timer.sleep(2000)
 
         Flow.Helpers.VarintHelper.write_encrypted_length_id_prefixed_packet(
           socket,
@@ -201,11 +253,11 @@ defmodule Flow.Helpers.ConnectionHelper do
           Flow.Versions.respawn(kv[:version]),
           respawn
         )
+        :ets.insert(:upstream, {:upstream, new_upstream})
 
-        :gen_tcp.close(upstream)
+        # :gen_tcp.close(upstream)
       end)
   end
-
 end
 
 defmodule Flow.Helpers.PadHelpers do
